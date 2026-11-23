@@ -130,6 +130,30 @@ def main():
     check('R7 引用标注上标渲染', sup_bad == 0 and sup_ok >= args.min_cites,
           f'上标{sup_ok}个, 非上标{sup_bad}个')
 
+    # R14 文献表序号不得上标（2026-11-23 踩坑固化）
+    # R7 故意跳过文献区，但若生成脚本用同一函数处理正文与文献表，会把 [n] 一并转上标，
+    # 而 R7 看不见 → 自检全 PASS 却带着错误交付。此检查专补该盲区：文献表里的
+    # [n] 是 GB/T 7714 的序号（正文格式），不是引用标注，必须为非上标。
+    ref_super_bad = 0
+    ref_entries = 0
+    in_refs_zone = False
+    for p in paras:
+        if p.text.strip().rstrip('：:') == '参考文献':
+            in_refs_zone = True
+            continue
+        if not in_refs_zone:
+            continue
+        if not re.match(r'^\[\d+\]', p.text.strip()):
+            continue
+        ref_entries += 1
+        # 只查序号所在的 run（通常是首 run），整段任何上标都属异常
+        for r in p.runs:
+            if re.search(r'\[\d+\]', r.text or '') and r.font.superscript:
+                ref_super_bad += 1
+                break
+    check('R14 文献表序号非上标', ref_super_bad == 0,
+          f'文献{ref_entries}条, 序号误上标{ref_super_bad}条')
+
     # R9 文献格式统一
     refs_list = [p.text.strip() for p in paras if re.match(r'^\[\d+\]', p.text.strip())]
     check(f'R9 文献{args.refs_min}-{args.refs_max}条',
