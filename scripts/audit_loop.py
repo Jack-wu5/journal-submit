@@ -36,6 +36,8 @@ def main():
     ap.add_argument('--min-cites', type=int, default=8)
     ap.add_argument('--abs-min', type=int, default=0)
     ap.add_argument('--abs-max', type=int, default=250)
+    ap.add_argument('--allow-half-punct', action='store_true',
+                    help='允许中文区半角标点（默认检查全角，个别刊例外的放行开关）')
     args = ap.parse_args()
 
     if not Path(args.docx).exists():
@@ -153,6 +155,38 @@ def main():
                 break
     check('R14 文献表序号非上标', ref_super_bad == 0,
           f'文献{ref_entries}条, 序号误上标{ref_super_bad}条')
+
+    # R15 中文区标点全角（2026-11-23 踩坑固化，可用 --allow-half-punct 关闭）
+    # 中文正文/摘要/关键词/标题里的逗号、分号、冒号应为全角（GB/T 15834，
+    # 中文科技期刊通行规范）。生成脚本默认用半角标点易踩坑，而 R1~R14 都不查此项。
+    # 英文摘要、Key words、参考文献著录（GB/T 7714 用半角）、英文图题表题不在此检查范围。
+    if not args.allow_half_punct:
+        half_bad = []
+        in_refs_zone = False
+        for p in paras:
+            t = p.text.strip()
+            if t.rstrip('：:') == '参考文献':
+                in_refs_zone = True
+                continue
+            if in_refs_zone:
+                continue
+            if t.startswith(('Abstract:', 'Key words:', 'Keywords:', 'KeyWords:',
+                             'Fig.', 'Tab.', 'Table ', 'http')):
+                continue
+            # 只在该段确实含中文时检查
+            if not re.search(r'[\u4e00-\u9fff]', t):
+                continue
+            # 逐字符找半角标点：前一个字符是中文/全角，或后一个字符是中文 → 判为半角误用
+            for m in re.finditer(r'[,;:]', t):
+                i = m.start()
+                prev = t[i-1] if i > 0 else ''
+                nxt = t[i+1] if i+1 < len(t) else ''
+                prev_cn = bool(re.match(r'[\u4e00-\u9fff]', prev))
+                next_cn = bool(re.match(r'[\u4e00-\u9fff]', nxt))
+                if prev_cn or next_cn:
+                    half_bad.append(t[max(0, i-10):i+10])
+        check('R15 中文标点全角', not half_bad,
+              f'半角误用{len(half_bad)}处: {half_bad[:3]}')
 
     # R9 文献格式统一
     refs_list = [p.text.strip() for p in paras if re.match(r'^\[\d+\]', p.text.strip())]
